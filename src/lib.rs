@@ -8,6 +8,7 @@
 #![allow(unused)]
 
 use ::std::os::raw::{c_char, c_int};
+type LcoreFn = Option<unsafe extern "C" fn(*mut c_void) -> i32>;
 
 #[link(name = "inlined")]
 extern "C" {
@@ -38,6 +39,13 @@ extern "C" {
     fn rte_mbuf_f_tx_tcp_cksum_() ->u64;
     fn rte_mbuf_f_tx_udp_cksum_() ->u64;
     fn rte_eth_tx_offload_tcp_tso_() -> u64;
+    fn rte_eal_remote_launch_(f: LcoreFn, arg: *mut c_void, slave_id: u32) -> c_int;
+    fn rte_eal_wait_lcore_(slave_id: u32) -> c_int;
+    fn rte_eal_get_lcore_state_(lcore_id: u32) -> u32;
+    fn rte_lcore_id_() -> u32;
+    fn rte_get_next_lcore_(i: u32, skip_main: c_int, wrap: c_int) -> u32;
+    fn rte_get_tsc_hz() -> u64;
+    fn rte_get_tsc_cycles() -> u64;
 }
 
 #[cfg(all(feature = "mlx5", target_os = "windows"))]
@@ -175,11 +183,6 @@ pub unsafe fn rte_pktmbuf_detach(m: *mut rte_mbuf) {
     rte_pktmbuf_detach_(m)
 }
 
-// #[inline]
-// pub unsafe fn rte_gso_segment(pkt: *mut rte_mbuf, gso_ctx: *const rte_gso_ctx, pkts_out: *mut *mut rte_mbuf, nb_pkts_out: u16) -> c_int {
-//     rte_gso_segment_(pkt, gso_ctx, pkts_out, nb_pkts_out)
-// }
-
 #[inline]
 pub unsafe fn rte_eth_tx_offload_tcp_tso() -> u64 {
     rte_eth_tx_offload_tcp_tso_()
@@ -208,4 +211,45 @@ pub unsafe fn rte_mbuf_f_tx_tcp_cksum() -> u64 {
 #[inline]
 pub unsafe fn rte_mbuf_f_tx_udp_cksum() -> u64 {
     rte_mbuf_f_tx_udp_cksum_()
+}
+
+/// Запуск функции на удаленном ядре.
+/// lcore_id должен быть в состоянии WAIT.
+#[inline(always)]
+pub unsafe fn rte_eal_remote_launch(f: LcoreFn, arg: *mut c_void, slave_id: u32) -> i32 {
+    rte_eal_remote_launch_(f, arg, slave_id)
+}
+
+/// Ожидание завершения работы ядра (обычно используется при выключении).
+#[inline(always)]
+pub unsafe fn rte_eal_wait_lcore(slave_id: u32) -> i32 {
+    rte_eal_wait_lcore_(slave_id)
+}
+
+/// Проверка текущего состояния ядра (LCORE_WAIT, LCORE_RUNNING и т.д.).
+#[inline(always)]
+pub unsafe fn rte_eal_get_lcore_state(lcore_id: u32) -> u32 {
+    rte_eal_get_lcore_state_(lcore_id)
+}
+
+/// Получение ID текущего ядра из Thread Local Storage (TLS).
+#[inline(always)]
+pub unsafe fn rte_lcore_id() -> u32 {
+    rte_lcore_id_()
+}
+
+/// Поиск следующего доступного ядра в маске запуска.
+#[inline(always)]
+pub unsafe fn rte_get_next_lcore(i: u32, skip_main: i32, wrap: i32) -> u32 {
+    rte_get_next_lcore_(i, skip_main, wrap)
+}
+
+#[inline(always)]
+pub unsafe fn rte_get_tsc_hz() -> u64 {
+    rte_get_tsc_hz_()
+}
+
+#[inline(always)]
+pub unsafe fn rte_get_tsc_cycles() -> u64 {
+    rte_get_tsc_cycles_()
 }
