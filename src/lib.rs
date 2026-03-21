@@ -39,13 +39,6 @@ extern "C" {
     fn rte_mbuf_f_tx_tcp_cksum_() ->u64;
     fn rte_mbuf_f_tx_udp_cksum_() ->u64;
     fn rte_eth_tx_offload_tcp_tso_() -> u64;
-    // fn rte_eal_remote_launch_(f: LcoreFn, arg: *mut c_void, slave_id: u32) -> c_int;
-    // fn rte_eal_wait_lcore_(slave_id: u32) -> c_int;
-    // fn rte_eal_get_lcore_state_(lcore_id: u32) -> u32;
-    // fn rte_lcore_id_() -> u32;
-    // fn rte_get_next_lcore_(i: u32, skip_main: c_int, wrap: c_int) -> u32;
-    // fn rte_get_tsc_hz_() -> u64;
-    // fn rte_get_tsc_cycles_() -> u64;
 }
 
 #[cfg(all(feature = "mlx5", target_os = "windows"))]
@@ -212,44 +205,3 @@ pub unsafe fn rte_mbuf_f_tx_tcp_cksum() -> u64 {
 pub unsafe fn rte_mbuf_f_tx_udp_cksum() -> u64 {
     rte_mbuf_f_tx_udp_cksum_()
 }
-
-/// Запуск функции на удаленном ядре.
-/// lcore_id должен быть в состоянии WAIT.
-// #[inline(always)]
-// pub unsafe fn rte_eal_remote_launch(f: LcoreFn, arg: *mut c_void, slave_id: u32) -> i32 {
-//     rte_eal_remote_launch_(f, arg, slave_id)
-// }
-
-// /// Ожидание завершения работы ядра (обычно используется при выключении).
-// #[inline(always)]
-// pub unsafe fn rte_eal_wait_lcore(slave_id: u32) -> i32 {
-//     rte_eal_wait_lcore_(slave_id)
-// }
-
-// /// Проверка текущего состояния ядра (LCORE_WAIT, LCORE_RUNNING и т.д.).
-// #[inline(always)]
-// pub unsafe fn rte_eal_get_lcore_state(lcore_id: u32) -> u32 {
-//     rte_eal_get_lcore_state_(lcore_id)
-// }
-
-// /// Получение ID текущего ядра из Thread Local Storage (TLS).
-// #[inline(always)]
-// pub unsafe fn rte_lcore_id() -> u32 {
-//     rte_lcore_id_()
-// }
-
-// /// Поиск следующего доступного ядра в маске запуска.
-// #[inline(always)]
-// pub unsafe fn rte_get_next_lcore(i: u32, skip_main: i32, wrap: i32) -> u32 {
-//     rte_get_next_lcore_(i, skip_main, wrap)
-// }
-
-// #[inline(always)]
-// pub unsafe fn rte_get_tsc_hz() -> u64 {
-//     rte_get_tsc_hz_()
-// }
-
-// #[inline(always)]
-// pub unsafe fn rte_get_tsc_cycles() -> u64 {
-//     rte_get_tsc_cycles_()
-// }
