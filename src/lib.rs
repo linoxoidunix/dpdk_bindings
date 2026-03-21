@@ -8,7 +8,6 @@
 #![allow(unused)]
 
 use ::std::os::raw::{c_char, c_int};
-type LcoreFn = Option<unsafe extern "C" fn(*mut c_void) -> i32>;
 
 #[link(name = "inlined")]
 extern "C" {
