@@ -286,7 +286,6 @@ fn os_build() -> Result<()> {
         .allowlist_function("rte_eal_wait_lcore")    // Ожидание завершения
         .allowlist_function("rte_eal_get_lcore_state") // Проверка состояния
         .allowlist_function("rte_get_next_lcore")    // Перебор доступных ядер
-        .allowlist_function("rte_lcore_id")          // Получение ID текущего ядра
         .allowlist_function("rte_get_main_lcore")    // ID главного ядра
         .allowlist_function("rte_get_tsc_hz")        // Частота (нужна для FastClock)
         .allowlist_function("rte_get_tsc_cycles")        // Частота (нужна для FastClock)

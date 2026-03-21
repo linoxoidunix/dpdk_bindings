@@ -10,7 +10,7 @@
 use ::std::os::raw::{c_char, c_int};
 
 #[link(name = "inlined")]
-extern "C" {
+unsafe extern "C" {
     fn rte_pktmbuf_free_(packet: *mut rte_mbuf);
     fn rte_pktmbuf_alloc_(mp: *mut rte_mempool) -> *mut rte_mbuf;
     fn rte_eth_tx_burst_(port_id: u16, queue_id: u16, tx_pkts: *mut *mut rte_mbuf, nb_pkts: u16) -> u16;
@@ -38,6 +38,7 @@ extern "C" {
     fn rte_mbuf_f_tx_tcp_cksum_() ->u64;
     fn rte_mbuf_f_tx_udp_cksum_() ->u64;
     fn rte_eth_tx_offload_tcp_tso_() -> u64;
+    fn rte_lcore_id_() -> u32;        // Получение ID текущего ядра
 }
 
 #[cfg(all(feature = "mlx5", target_os = "windows"))]
@@ -203,4 +204,9 @@ pub unsafe fn rte_mbuf_f_tx_tcp_cksum() -> u64 {
 #[inline]
 pub unsafe fn rte_mbuf_f_tx_udp_cksum() -> u64 {
     rte_mbuf_f_tx_udp_cksum_()
+}
+
+#[inline]
+pub unsafe fn rte_lcore_id() -> u32 {
+    rte_lcore_id_()
 }
