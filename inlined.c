@@ -8,6 +8,9 @@
 #include <rte_ethdev.h>
 #include <rte_ether.h>
 #include <rte_mbuf.h>
+#include <rte_cycles.h>
+#include <rte_lcore.h>
+#include <rte_launch.h>
 
 void rte_pktmbuf_free_(struct rte_mbuf *packet)
 {
@@ -120,6 +123,45 @@ uint64_t rte_mbuf_f_tx_tcp_seg_(void) { return RTE_MBUF_F_TX_TCP_SEG; }
 uint64_t rte_mbuf_f_tx_tcp_cksum_(void) { return RTE_MBUF_F_TX_TCP_CKSUM; }
 uint64_t rte_mbuf_f_tx_udp_cksum_(void) { return RTE_MBUF_F_TX_UDP_CKSUM; }
 uint64_t rte_eth_tx_offload_tcp_tso_(void) { return RTE_ETH_TX_OFFLOAD_TCP_TSO; }
+uint64_t rte_get_tsc_hz_(void) { return rte_get_tsc_hz(); }
+uint64_t rte_get_tsc_cycles_(void) { return rte_get_tsc_cycles(); }
 
+/* * Запуск функции на удаленном ядре.
+ * f - указатель на функцию типа int (*)(void *)
+ */
+int rte_eal_remote_launch_(lcore_function_t *f, void *arg, unsigned int slave_id) 
+{
+    return rte_eal_remote_launch(f, arg, slave_id);
+}
+
+/* * Ожидание завершения конкретного ядра.
+ * Возвращает 0 при успехе или отрицательное число при ошибке.
+ */
+int rte_eal_wait_lcore_(unsigned int slave_id) 
+{
+    return rte_eal_wait_lcore(slave_id);
+}
+
+/* * Возвращает состояние ядра (WAIT, RUNNING, FINISHED).
+ */
+enum rte_lcore_state_t rte_eal_get_lcore_state_(unsigned int lcore_id) 
+{
+    return rte_eal_get_lcore_state(lcore_id);
+}
+
+/* * Поиск следующего доступного ядра.
+ * i - текущий ID, skip_main (1 или 0), wrap (зацикливание)
+ */
+unsigned int rte_get_next_lcore_(unsigned int i, int skip_main, int wrap) 
+{
+    return rte_get_next_lcore(i, skip_main, wrap);
+}
+
+/* * Получение ID текущего ядра (через Thread Local Storage внутри DPDK).
+ */
+unsigned int rte_lcore_id_(void) 
+{
+    return rte_lcore_id();
+}
 
 

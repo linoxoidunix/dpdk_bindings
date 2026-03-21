@@ -282,6 +282,14 @@ fn os_build() -> Result<()> {
         .allowlist_function("rte_socket_id")
         .allowlist_function("rte_strerror")
         .allowlist_function("rte_eth_tx_offload_tcp_tso_")
+        .allowlist_function("rte_eal_remote_launch") // Запуск
+        .allowlist_function("rte_eal_wait_lcore")    // Ожидание завершения
+        .allowlist_function("rte_eal_get_lcore_state") // Проверка состояния
+        .allowlist_function("rte_get_next_lcore")    // Перебор доступных ядер
+        .allowlist_function("rte_lcore_id")          // Получение ID текущего ядра
+        .allowlist_function("rte_get_main_lcore")    // ID главного ядра
+        .allowlist_function("rte_get_tsc_hz")        // Частота (нужна для FastClock)
+        .allowlist_function("rte_get_tsc_cycles")        // Частота (нужна для FastClock)
         .allowlist_type("rte_eth_fc_conf")
         .allowlist_type("rte_eth_rxconf")
         .allowlist_type("rte_eth_txconf")
@@ -290,6 +298,8 @@ fn os_build() -> Result<()> {
         .allowlist_type("rte_mempool")
         .allowlist_type("rte_pktmbuf_pool_private")
         .allowlist_type("rte_gso_ctx")
+        .allowlist_type("rte_lcore_state_t")         // WAIT, RUNNING, FINISHED
+        .allowlist_type("lcore_function_t")          // Сигнатура функции payload
         .allowlist_var("RTE_ETH_DEV_NO_OWNER")
         .allowlist_var("RTE_ETH_LINK_FULL_DUPLEX")
         .allowlist_var("RTE_ETH_LINK_UP")
