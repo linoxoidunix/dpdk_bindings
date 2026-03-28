@@ -2,62 +2,66 @@
 set -e
 
 # ==========================================
-# Настройки версии (меняй здесь)
+# Настройки версии (Источник истины)
 # ==========================================
-DPDK_VER="25.11" # Например, 22.11, 23.11 или 25.11
+DPDK_VER="25.11"
 # ==========================================
 
 # 1. Настройка путей
-PROJECT_ROOT=$(pwd)
-INSTALL_DIR="$PROJECT_ROOT/install"
-BUILD_TMP="$PROJECT_ROOT/build_tmp"
+# $1 - первый аргумент (INSTALL_DIR), $2 - второй аргумент (BUILD_TMP)
+# Если аргументы не переданы, используем дефолтные папки в текущей директории
+INSTALL_DIR="${1:-$(pwd)/install}"
+BUILD_TMP="${2:-$(pwd)/build_tmp}"
+
 DPDK_DIR="dpdk-$DPDK_VER"
 DPDK_TAR="$DPDK_DIR.tar.xz"
 
 echo "--- Начинаем сборку DPDK $DPDK_VER ---"
-echo "Корень проекта: $PROJECT_ROOT"
 echo "Путь установки: $INSTALL_DIR"
+echo "Временная папка сборки: $BUILD_TMP"
 
-# 2. Создаем временную директорию
+# 2. Создаем директории
 mkdir -p "$BUILD_TMP"
-pushd "$BUILD_TMP"
+mkdir -p "$INSTALL_DIR"
+
+# Переходим во временную папку
+pushd "$BUILD_TMP" > /dev/null
 
 # 3. Скачивание исходников
 if [ ! -f "$DPDK_TAR" ]; then
     echo "Скачивание $DPDK_TAR..."
-    wget "https://fast.dpdk.org/rel/$DPDK_TAR"
+    wget -c "https://fast.dpdk.org/rel/$DPDK_TAR"
 fi
 
 # 4. Распаковка
 echo "Распаковка $DPDK_DIR..."
-rm -rf "$DPDK_DIR"
-tar -xvf "$DPDK_TAR"
-cd "$DPDK_DIR"
+# Используем --strip-components=1, чтобы распаковать содержимое сразу в текущую папку
+# Это чище, чем cd внутрь распакованной папки
+tar -xJf "$DPDK_TAR" --strip-components=1
 
-# 5. Подготовка окружения
-echo "Обновление инструментов сборки..."
+# 5. Подготовка инструментов
+echo "Проверка инструментов сборки..."
 pip3 install --upgrade pyelftools meson ninja
 
 # 6. Сборка
-echo "Конфигурация Meson (Версия: $DPDK_VER)..."
-# Используем префикс для локальной установки в папку проекта
+echo "Конфигурация Meson..."
+# CC/CXX можно оставить жесткими, если уверен, что gcc-14 есть в системе
 CC=gcc-14 CXX=g++-14 meson setup build \
     --prefix="$INSTALL_DIR" \
     --libdir="lib64" \
-    -Ddisable_drivers=net/gve,net/ionic
+    -Ddisable_drivers=net/gve,net/ionic \
+    -Dbuildtype=release \
+    -Ddefault_library=shared
 
 echo "Компиляция..."
 ninja -C build
 
 echo "Установка в $INSTALL_DIR..."
-# В современных DPDK ninja install корректно учитывает префикс
 ninja -C build install
 
-# 7. Возвращаемся и чистим
-popd
-# rm -rf "$BUILD_TMP" # Можно закомментировать для отладки
+# 7. Возвращаемся
+popd > /dev/null
 
 echo "--- Сборка $DPDK_VER завершена успешно! ---"
-echo "Файлы установлены в: $INSTALL_DIR"
 echo "Библиотеки: $INSTALL_DIR/lib64"
 echo "Инклюды: $INSTALL_DIR/include"

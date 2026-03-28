@@ -192,21 +192,19 @@ fn os_build() -> Result<()> {
 
     // Если pkg-config промолчал, пробуем взять из ENV или сконструировать сами
     if cflags.trim().is_empty() {
-        if let Ok(env_cflags) = env::var("CFLAGS") {
-            cflags = env_cflags;
+        // Читаем проброшенный из main() путь
+        let install_dir = env::var("DPDK_INSTALL_DIR").expect("DPDK_INSTALL_DIR not set in main()");
+
+        let local_install_inc = Path::new(&install_dir).join("include");
+
+        if local_install_inc.exists() {
+            cflags = format!("-I{}", local_install_inc.display());
+            println!("cargo:warning=[FALLBACK] Using CFLAGS from: {}", cflags);
         } else {
-            // ФОЛБЭК: Если мы в локальной сборке, пути предсказуемы
-            let manifest_dir = env::var("CARGO_MANIFEST_DIR")?;
-            let install_inc = Path::new(&manifest_dir).join("install/include");
-            if install_inc.exists() {
-                cflags = format!("-I{}", install_inc.display());
-                println!("cargo:warning=[FALLBACK] Manual CFLAGS set to: {}", cflags);
-            } else {
-                panic!(
-                    "CFLAGS is empty and no local install found at {:?}",
-                    install_inc
-                );
-            }
+            panic!(
+                "CFLAGS is empty and no local install found at {:?}",
+                local_install_inc
+            );
         }
     }
 
@@ -362,79 +360,94 @@ fn os_build() -> Result<()> {
     Ok(())
 }
 
+fn get_dpdk_version_from_script(script_path: &Path) -> String {
+    let content = std::fs::read_to_string(script_path)
+        .expect("Failed to read build script to extract version");
+
+    // Ищем строку DPDK_VER="XX.XX"
+    content
+        .lines()
+        .find(|line| line.contains("DPDK_VER="))
+        .and_then(|line| line.split('"').nth(1))
+        .expect("Could not find DPDK_VER variable in bash script. Check the quotes!")
+        .to_string()
+}
+
+use std::fs;
+use std::process::{Command, Stdio};
+
 fn main() {
     println!("cargo:warning=------- EXECUTING DPDK BUILD SCRIPT -------");
 
-    // 1. Получаем пути к проекту
+    // 1. Инициализация базовых путей
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("Failed to get manifest dir");
     let project_root = Path::new(&manifest_dir);
-    let install_dir = project_root.join("install");
-    let dpdk_pc_path = install_dir.join("lib64/pkgconfig/libdpdk.pc");
-
-    // ВАЖНО: убедись, что имя файла совпадает (в твоем коде было build-install-dpdk.sh)
     let build_script_path = project_root.join("scripts/build-install-dpdk.sh");
 
-    // 2. Указываем Cargo следить за файлами
+    // 2. ДИНАМИЧЕСКОЕ ПОЛУЧЕНИЕ ВЕРСИИ
+    let dpdk_ver = get_dpdk_version_from_script(&build_script_path);
+    println!("cargo:warning=[INFO] Target DPDK Version: {}", dpdk_ver);
+
+    // 3. ОПРЕДЕЛЕНИЕ СТАБИЛЬНЫХ ПУТЕЙ
+    let home_dir = env::var("HOME").expect("Failed to get HOME directory");
+    let install_dir = Path::new(&home_dir).join(format!(".local/share/dpdk-{}", dpdk_ver));
+    let dpdk_pc_path = install_dir.join("lib64/pkgconfig/libdpdk.pc");
+    let build_tmp = env::temp_dir().join(format!("dpdk_build_{}", dpdk_ver.replace('.', "_")));
+
+    // 4. Слежение за изменениями
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=inlined.c");
     println!("cargo:rerun-if-changed=wrapper.h");
     println!("cargo:rerun-if-changed=scripts/build-install-dpdk.sh");
 
-    // 3. ПРОВЕРКА и СБОРКА:
+    // 5. ПРОВЕРКА и СБОРКА
     if !dpdk_pc_path.exists() {
         println!(
-            "cargo:warning=[STATUS] DPDK not found in {:?}. Starting build...",
-            install_dir
+            "cargo:warning=[STATUS] DPDK {} not found. Starting build...",
+            dpdk_ver
         );
 
-        // На случай, если прошлая сборка прервалась и оставила "битые" папки
-        let build_tmp = project_root.join("build_tmp");
+        fs::create_dir_all(&install_dir).expect("Failed to create install directory");
         if build_tmp.exists() {
-            println!("cargo:warning=[CLEANUP] Removing old build_tmp to avoid corruption...");
-            let _ = std::fs::remove_dir_all(&build_tmp);
+            let _ = fs::remove_dir_all(&build_tmp);
         }
+        fs::create_dir_all(&build_tmp).expect("Failed to create build_tmp");
 
-        let status = std::process::Command::new("bash")
+        let status = Command::new("bash")
             .arg(&build_script_path)
+            .arg(&install_dir)
+            .arg(&build_tmp)
             .current_dir(project_root)
+            .stderr(Stdio::inherit())
             .status()
-            .expect("Failed to execute DPDK build script");
+            .expect("Failed to start DPDK build script");
 
         if !status.success() {
-            panic!("DPDK build script failed. Try deleting 'build_tmp' and 'install' folders manually.");
+            panic!("\n[ERROR] DPDK build failed. Code: {:?}\n", status.code());
         }
-    } else {
-        println!(
-            "cargo:warning=[STATUS] DPDK is already installed in {:?}",
-            install_dir
-        );
     }
 
-    // 4. ЖЕСТКАЯ ИЗОЛЯЦИЯ ОТ СИСТЕМНОГО DPDK
+    // --- ПРОБРАСЫВАНИЕ ПУТЕЙ ДЛЯ os_build() ---
+    // Устанавливаем путь установки в переменную окружения, чтобы os_build его увидел
+    env::set_var("DPDK_INSTALL_DIR", &install_dir);
+
+    // 6. ИЗОЛЯЦИЯ ОКРУЖЕНИЯ ДЛЯ pkg-config
     let local_pkg_config = install_dir.join("lib64/pkgconfig");
     let local_lib_dir = install_dir.join("lib64");
-
-    // PKG_CONFIG_SYSROOT_DIR="/" - предотвращает путаницу с путями
-    // PKG_CONFIG_LIBDIR - заменяет стандартные пути поиска pkg-config на наш
-    let pkg_config_path = local_pkg_config.to_str().unwrap();
+    let pkg_config_path = local_pkg_config.to_str().expect("Non-UTF8 path");
 
     env::set_var("PKG_CONFIG_PATH", pkg_config_path);
     env::set_var("PKG_CONFIG_LIBDIR", pkg_config_path);
     env::set_var("PKG_CONFIG_ALLOW_SYSTEM_LIBS", "0");
     env::set_var("PKG_CONFIG_ALLOW_SYSTEM_CFLAGS", "0");
 
-    // 5. ПЕРЕДАЧА ПАРАМЕТРОВ ЛИНКОВЩИКУ
-    // Сообщаем Rust, где искать библиотеки при компиляции
+    // 7. ЛИНКОВКА
     println!("cargo:rustc-link-search=native={}", local_lib_dir.display());
-
-    // Прописываем RPATH, чтобы при запуске бинарник сам знал, где лежат его .so
-    // (Иначе придется всегда писать LD_LIBRARY_PATH перед запуском)
     println!(
         "cargo:rustc-link-arg=-Wl,-rpath,{}",
         local_lib_dir.display()
     );
 
-    // 6. Запуск основной генерации биндингов
     match os_build() {
         Ok(()) => {}
         Err(e) => panic!("Failed to generate bindings: {:?}", e),
