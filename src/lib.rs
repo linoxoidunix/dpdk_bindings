@@ -13,8 +13,18 @@ use ::std::os::raw::{c_char, c_int};
 unsafe extern "C" {
     fn rte_pktmbuf_free_(packet: *mut rte_mbuf);
     fn rte_pktmbuf_alloc_(mp: *mut rte_mempool) -> *mut rte_mbuf;
-    fn rte_eth_tx_burst_(port_id: u16, queue_id: u16, tx_pkts: *mut *mut rte_mbuf, nb_pkts: u16) -> u16;
-    fn rte_eth_rx_burst_(port_id: u16, queue_id: u16, rx_pkts: *mut *mut rte_mbuf, nb_pkts: u16) -> u16;
+    fn rte_eth_tx_burst_(
+        port_id: u16,
+        queue_id: u16,
+        tx_pkts: *mut *mut rte_mbuf,
+        nb_pkts: u16,
+    ) -> u16;
+    fn rte_eth_rx_burst_(
+        port_id: u16,
+        queue_id: u16,
+        rx_pkts: *mut *mut rte_mbuf,
+        nb_pkts: u16,
+    ) -> u16;
     fn rte_mbuf_refcnt_read_(m: *const rte_mbuf) -> u16;
     fn rte_mbuf_refcnt_update_(m: *mut rte_mbuf, value: i16) -> u16;
     fn rte_pktmbuf_adj_(packet: *mut rte_mbuf, len: u16) -> *mut c_char;
@@ -28,17 +38,17 @@ unsafe extern "C" {
     fn rte_eth_tx_offload_udp_cksum_() -> c_int;
     fn rte_eth_rx_offload_tcp_cksum_() -> c_int;
     fn rte_eth_rx_offload_udp_cksum_() -> c_int;
-    fn rte_eth_tx_offload_multi_segs_() -> c_int;    
+    fn rte_eth_tx_offload_multi_segs_() -> c_int;
     fn rte_pktmbuf_prepend_(m: *mut rte_mbuf, len: u16) -> *mut c_char;
     fn rte_mbuf_from_indirect_(m: *mut rte_mbuf) -> *mut rte_mbuf;
     fn rte_pktmbuf_detach_(m: *mut rte_mbuf);
-    fn rte_mbuf_f_tx_ipv4_() ->u64;
-    fn rte_mbuf_f_tx_ip_cksum_() ->u64;
-    fn rte_mbuf_f_tx_tcp_seg_() ->u64;
-    fn rte_mbuf_f_tx_tcp_cksum_() ->u64;
-    fn rte_mbuf_f_tx_udp_cksum_() ->u64;
+    fn rte_mbuf_f_tx_ipv4_() -> u64;
+    fn rte_mbuf_f_tx_ip_cksum_() -> u64;
+    fn rte_mbuf_f_tx_tcp_seg_() -> u64;
+    fn rte_mbuf_f_tx_tcp_cksum_() -> u64;
+    fn rte_mbuf_f_tx_udp_cksum_() -> u64;
     fn rte_eth_tx_offload_tcp_tso_() -> u64;
-    fn rte_lcore_id_() -> u32;        // Получение ID текущего ядра
+    fn rte_lcore_id_() -> u32; // Получение ID текущего ядра
 }
 
 #[cfg(all(feature = "mlx5", target_os = "windows"))]
@@ -82,12 +92,22 @@ pub unsafe fn rte_pktmbuf_alloc(mp: *mut rte_mempool) -> *mut rte_mbuf {
 }
 
 #[inline]
-pub unsafe fn rte_eth_tx_burst(port_id: u16, queue_id: u16, tx_pkts: *mut *mut rte_mbuf, nb_pkts: u16) -> u16 {
+pub unsafe fn rte_eth_tx_burst(
+    port_id: u16,
+    queue_id: u16,
+    tx_pkts: *mut *mut rte_mbuf,
+    nb_pkts: u16,
+) -> u16 {
     rte_eth_tx_burst_(port_id, queue_id, tx_pkts, nb_pkts)
 }
 
 #[inline]
-pub unsafe fn rte_eth_rx_burst(port_id: u16, queue_id: u16, rx_pkts: *mut *mut rte_mbuf, nb_pkts: u16) -> u16 {
+pub unsafe fn rte_eth_rx_burst(
+    port_id: u16,
+    queue_id: u16,
+    rx_pkts: *mut *mut rte_mbuf,
+    nb_pkts: u16,
+) -> u16 {
     rte_eth_rx_burst_(port_id, queue_id, rx_pkts, nb_pkts)
 }
 

@@ -185,14 +185,28 @@ fn os_build() -> Result<()> {
     let cflags_bytes = Command::new("pkg-config")
         .args(&["--cflags", "libdpdk"])
         .output()
-        .unwrap_or_else(|e| panic!("Failed pkg-config cflags: {:?}", e))
-        .stdout;
-    let mut cflags = String::from_utf8(cflags_bytes).unwrap();
+        .map(|o| o.stdout)
+        .unwrap_or_default();
 
-    if cflags.is_empty() {
-        cflags = env::var("CFLAGS").unwrap_or_else(|_| String::from(""));
-        if cflags.is_empty() {
-            panic!("CFLAGS is empty or not set");
+    let mut cflags = String::from_utf8(cflags_bytes).unwrap_or_default();
+
+    // Если pkg-config промолчал, пробуем взять из ENV или сконструировать сами
+    if cflags.trim().is_empty() {
+        if let Ok(env_cflags) = env::var("CFLAGS") {
+            cflags = env_cflags;
+        } else {
+            // ФОЛБЭК: Если мы в локальной сборке, пути предсказуемы
+            let manifest_dir = env::var("CARGO_MANIFEST_DIR")?;
+            let install_inc = Path::new(&manifest_dir).join("install/include");
+            if install_inc.exists() {
+                cflags = format!("-I{}", install_inc.display());
+                println!("cargo:warning=[FALLBACK] Manual CFLAGS set to: {}", cflags);
+            } else {
+                panic!(
+                    "CFLAGS is empty and no local install found at {:?}",
+                    install_inc
+                );
+            }
         }
     }
 
@@ -226,7 +240,12 @@ fn os_build() -> Result<()> {
     // Link in `librte_net_mlx5` and its dependencies if desired.
     #[cfg(feature = "mlx5")]
     {
-        lib_names.extend(&["rte_net_mlx5", "rte_bus_pci", "rte_bus_vdev", "rte_common_mlx5"]);
+        lib_names.extend(&[
+            "rte_net_mlx5",
+            "rte_bus_pci",
+            "rte_bus_vdev",
+            "rte_common_mlx5",
+        ]);
     }
 
     // Step 1: Now that we've compiled and installed DPDK, point cargo to the libraries.
@@ -283,12 +302,12 @@ fn os_build() -> Result<()> {
         .allowlist_function("rte_strerror")
         .allowlist_function("rte_eth_tx_offload_tcp_tso_")
         .allowlist_function("rte_eal_remote_launch") // Запуск
-        .allowlist_function("rte_eal_wait_lcore")    // Ожидание завершения
+        .allowlist_function("rte_eal_wait_lcore") // Ожидание завершения
         .allowlist_function("rte_eal_get_lcore_state") // Проверка состояния
-        .allowlist_function("rte_get_next_lcore")    // Перебор доступных ядер
-        .allowlist_function("rte_get_main_lcore")    // ID главного ядра
-        .allowlist_function("rte_get_tsc_hz")        // Частота (нужна для FastClock)
-        .allowlist_function("rte_get_tsc_cycles")        // Частота (нужна для FastClock)
+        .allowlist_function("rte_get_next_lcore") // Перебор доступных ядер
+        .allowlist_function("rte_get_main_lcore") // ID главного ядра
+        .allowlist_function("rte_get_tsc_hz") // Частота (нужна для FastClock)
+        .allowlist_function("rte_get_tsc_cycles") // Частота (нужна для FastClock)
         .allowlist_type("rte_eth_fc_conf")
         .allowlist_type("rte_eth_rxconf")
         .allowlist_type("rte_eth_txconf")
@@ -297,8 +316,8 @@ fn os_build() -> Result<()> {
         .allowlist_type("rte_mempool")
         .allowlist_type("rte_pktmbuf_pool_private")
         .allowlist_type("rte_gso_ctx")
-        .allowlist_type("rte_lcore_state_t")         // WAIT, RUNNING, FINISHED
-        .allowlist_type("lcore_function_t")          // Сигнатура функции payload
+        .allowlist_type("rte_lcore_state_t") // WAIT, RUNNING, FINISHED
+        .allowlist_type("lcore_function_t") // Сигнатура функции payload
         .allowlist_var("RTE_ETH_DEV_NO_OWNER")
         .allowlist_var("RTE_ETH_LINK_FULL_DUPLEX")
         .allowlist_var("RTE_ETH_LINK_UP")
@@ -325,7 +344,9 @@ fn os_build() -> Result<()> {
         .generate()
         .unwrap_or_else(|e| panic!("Failed to generate bindings: {:?}", e));
     let bindings_out = out_dir.join("bindings.rs");
-    bindings.write_to_file(bindings_out).expect("Failed to write bindings");
+    bindings
+        .write_to_file(bindings_out)
+        .expect("Failed to write bindings");
 
     // Step 3: Compile a stub file so Rust can access `inline` functions in the headers
     // that aren't compiled into the libraries.
@@ -343,14 +364,79 @@ fn os_build() -> Result<()> {
 
 fn main() {
     println!("cargo:warning=------- EXECUTING DPDK BUILD SCRIPT -------");
-    // 1. Указываем Cargo, за какими файлами следить.
-    // Если любой из них изменится, build.rs запустится снова.
+
+    // 1. Получаем пути к проекту
+    let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("Failed to get manifest dir");
+    let project_root = Path::new(&manifest_dir);
+    let install_dir = project_root.join("install");
+    let dpdk_pc_path = install_dir.join("lib64/pkgconfig/libdpdk.pc");
+
+    // ВАЖНО: убедись, что имя файла совпадает (в твоем коде было build-install-dpdk.sh)
+    let build_script_path = project_root.join("scripts/build-install-dpdk.sh");
+
+    // 2. Указываем Cargo следить за файлами
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=inlined.c");
     println!("cargo:rerun-if-changed=wrapper.h");
+    println!("cargo:rerun-if-changed=scripts/build-install-dpdk.sh");
 
+    // 3. ПРОВЕРКА и СБОРКА:
+    if !dpdk_pc_path.exists() {
+        println!(
+            "cargo:warning=[STATUS] DPDK not found in {:?}. Starting build...",
+            install_dir
+        );
+
+        // На случай, если прошлая сборка прервалась и оставила "битые" папки
+        let build_tmp = project_root.join("build_tmp");
+        if build_tmp.exists() {
+            println!("cargo:warning=[CLEANUP] Removing old build_tmp to avoid corruption...");
+            let _ = std::fs::remove_dir_all(&build_tmp);
+        }
+
+        let status = std::process::Command::new("bash")
+            .arg(&build_script_path)
+            .current_dir(project_root)
+            .status()
+            .expect("Failed to execute DPDK build script");
+
+        if !status.success() {
+            panic!("DPDK build script failed. Try deleting 'build_tmp' and 'install' folders manually.");
+        }
+    } else {
+        println!(
+            "cargo:warning=[STATUS] DPDK is already installed in {:?}",
+            install_dir
+        );
+    }
+
+    // 4. ЖЕСТКАЯ ИЗОЛЯЦИЯ ОТ СИСТЕМНОГО DPDK
+    let local_pkg_config = install_dir.join("lib64/pkgconfig");
+    let local_lib_dir = install_dir.join("lib64");
+
+    // PKG_CONFIG_SYSROOT_DIR="/" - предотвращает путаницу с путями
+    // PKG_CONFIG_LIBDIR - заменяет стандартные пути поиска pkg-config на наш
+    let pkg_config_path = local_pkg_config.to_str().unwrap();
+
+    env::set_var("PKG_CONFIG_PATH", pkg_config_path);
+    env::set_var("PKG_CONFIG_LIBDIR", pkg_config_path);
+    env::set_var("PKG_CONFIG_ALLOW_SYSTEM_LIBS", "0");
+    env::set_var("PKG_CONFIG_ALLOW_SYSTEM_CFLAGS", "0");
+
+    // 5. ПЕРЕДАЧА ПАРАМЕТРОВ ЛИНКОВЩИКУ
+    // Сообщаем Rust, где искать библиотеки при компиляции
+    println!("cargo:rustc-link-search=native={}", local_lib_dir.display());
+
+    // Прописываем RPATH, чтобы при запуске бинарник сам знал, где лежат его .so
+    // (Иначе придется всегда писать LD_LIBRARY_PATH перед запуском)
+    println!(
+        "cargo:rustc-link-arg=-Wl,-rpath,{}",
+        local_lib_dir.display()
+    );
+
+    // 6. Запуск основной генерации биндингов
     match os_build() {
-        Ok(()) => {},
+        Ok(()) => {}
         Err(e) => panic!("Failed to generate bindings: {:?}", e),
     }
 }
