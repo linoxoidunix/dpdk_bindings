@@ -174,86 +174,87 @@ fn os_build() -> Result<()> {
     Ok(())
 }
 
+use std::path::PathBuf;
+
 #[cfg(target_os = "linux")]
-fn os_build() -> Result<()> {
-    use std::process::Command;
+fn os_build(install_dir: &Path, pkg_config_path: &str) -> Result<()> {
+    let out_dir = PathBuf::from(env::var("OUT_DIR")?);
+    let project_root = PathBuf::from(env::var("CARGO_MANIFEST_DIR")?);
 
-    let out_dir_s = env::var("OUT_DIR").unwrap();
-    let out_dir = Path::new(&out_dir_s);
+    // 1. ПОЛУЧАЕМ ФЛАГИ ЧЕРЕЗ PKG-CONFIG
+    // Мы принудительно устанавливаем PKG_CONFIG_PATH для вызова команды
+    let mut pkg_cmd = Command::new("pkg-config");
+    pkg_cmd.env("PKG_CONFIG_PATH", pkg_config_path);
 
-    println!("cargo:rerun-if-env-changed=PKG_CONFIG_PATH");
-    let cflags_bytes = Command::new("pkg-config")
+    // CFLAGS (Инклюды)
+    // 1. ПОЛУЧАЕМ CFLAGS (Инклюды)
+    let cflags_out = new_pkg_config_cmd(pkg_config_path)
         .args(&["--cflags", "libdpdk"])
-        .output()
-        .map(|o| o.stdout)
-        .unwrap_or_default();
+        .output()?;
+    let mut cflags = String::from_utf8_lossy(&cflags_out.stdout).to_string();
 
-    let mut cflags = String::from_utf8(cflags_bytes).unwrap_or_default();
-
-    // Если pkg-config промолчал, пробуем взять из ENV или сконструировать сами
     if cflags.trim().is_empty() {
-        // Читаем проброшенный из main() путь
-        let install_dir = env::var("DPDK_INSTALL_DIR").expect("DPDK_INSTALL_DIR not set in main()");
-
-        let local_install_inc = Path::new(&install_dir).join("include");
-
-        if local_install_inc.exists() {
-            cflags = format!("-I{}", local_install_inc.display());
-            println!("cargo:warning=[FALLBACK] Using CFLAGS from: {}", cflags);
+        let fallback_inc = install_dir.join("include");
+        if fallback_inc.exists() {
+            cflags = format!("-I{}", fallback_inc.display());
+            println!("cargo:warning=[FALLBACK] Using CFLAGS: {}", cflags);
         } else {
-            panic!(
-                "CFLAGS is empty and no local install found at {:?}",
-                local_install_inc
-            );
+            panic!("DPDK include directory not found at {:?}", fallback_inc);
         }
     }
+
+    // LIBS (Библиотеки)
+    let libs_out = pkg_cmd.args(&["--libs", "libdpdk"]).output()?;
+    let ldflags = String::from_utf8_lossy(&libs_out.stdout);
 
     let mut header_locations = vec![];
-
-    for flag in cflags.split(' ') {
+    for flag in cflags.split_whitespace() {
         if flag.starts_with("-I") {
-            let header_location = flag[2..].trim();
-            header_locations.push(header_location);
+            header_locations.push(flag[2..].to_string());
         }
     }
-
-    let ldflags_bytes = Command::new("pkg-config")
-        .args(&["--libs", "libdpdk"])
-        .output()
-        .unwrap_or_else(|e| panic!("Failed pkg-config ldflags: {:?}", e))
-        .stdout;
-    let ldflags = String::from_utf8(ldflags_bytes).unwrap();
 
     let mut library_location = None;
     let mut lib_names = vec![];
 
-    for flag in ldflags.split(' ') {
+    for flag in ldflags.split_whitespace() {
         if flag.starts_with("-L") {
-            library_location = Some(&flag[2..]);
+            library_location = Some(flag[2..].to_string());
         } else if flag.starts_with("-l") {
-            lib_names.push(&flag[2..]);
+            lib_names.push(flag[2..].to_string());
         }
     }
 
-    // Link in `librte_net_mlx5` and its dependencies if desired.
-    #[cfg(feature = "mlx5")]
-    {
-        lib_names.extend(&[
-            "rte_net_mlx5",
-            "rte_bus_pci",
-            "rte_bus_vdev",
-            "rte_common_mlx5",
+    // 2. ДОБАВЛЯЕМ СПЕЦИФИЧНЫЕ ЛИБЫ (MLX5, NUMA)
+    // Внутри build.rs фичи проверяются через CARGO_FEATURE_<NAME>
+    if env::var("CARGO_FEATURE_MLX5").is_ok() {
+        lib_names.extend(vec![
+            "rte_net_mlx5".to_string(),
+            "rte_common_mlx5".to_string(),
+            "ibverbs".to_string(),
+            "mlx5".to_string(),
         ]);
     }
+    lib_names.push("numa".to_string());
 
-    // Step 1: Now that we've compiled and installed DPDK, point cargo to the libraries.
-    if let Some(location) = library_location {
-        println!("cargo:rustc-link-search=native={}", location);
-    }
+    lib_names.sort();
+    lib_names.dedup();
 
-    for lib_name in &lib_names {
-        println!("cargo:rustc-link-lib=dylib={}", lib_name);
+    // 3. ЭКСПОРТ ДЛЯ CARGO (Чтобы зависимые проекты видели эти пути)
+    let final_lib_dir =
+        library_location.unwrap_or_else(|| install_dir.join("lib64").display().to_string());
+
+    println!("cargo:rustc-link-search=native={}", final_lib_dir);
+    // RPATH критически важен: он запекает путь в бинарник, заменяя LD_LIBRARY_PATH
+    println!("cargo:rustc-link-arg=-Wl,-rpath,{}", final_lib_dir);
+
+    println!("cargo:warning=---------------------------------------");
+    println!("cargo:warning=LNK: Linking DPDK libraries:");
+    for lib in &lib_names {
+        println!("cargo:warning=  |- lib{}", lib);
+        println!("cargo:rustc-link-lib=dylib={}", lib);
     }
+    println!("cargo:warning=---------------------------------------");
 
     // Step 2: Generate bindings for the DPDK headers.
     let mut builder: Builder = Builder::default();
@@ -373,45 +374,33 @@ fn get_dpdk_version_from_script(script_path: &Path) -> String {
         .to_string()
 }
 
+// Вспомогательная функция для создания преднастроенной команды pkg-config
+fn new_pkg_config_cmd(pkg_config_path: &str) -> Command {
+    let mut cmd = Command::new("pkg-config");
+    cmd.env("PKG_CONFIG_PATH", pkg_config_path);
+    cmd
+}
+
 use std::fs;
 use std::process::{Command, Stdio};
 
 fn main() {
-    println!("cargo:warning=------- EXECUTING DPDK BUILD SCRIPT -------");
-
-    // 1. Инициализация базовых путей
-    let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("Failed to get manifest dir");
+    let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
     let project_root = Path::new(&manifest_dir);
     let build_script_path = project_root.join("scripts/build-install-dpdk.sh");
 
-    // 2. ДИНАМИЧЕСКОЕ ПОЛУЧЕНИЕ ВЕРСИИ
     let dpdk_ver = get_dpdk_version_from_script(&build_script_path);
-    println!("cargo:warning=[INFO] Target DPDK Version: {}", dpdk_ver);
-
-    // 3. ОПРЕДЕЛЕНИЕ СТАБИЛЬНЫХ ПУТЕЙ
-    let home_dir = env::var("HOME").expect("Failed to get HOME directory");
+    let home_dir = env::var("HOME").unwrap();
     let install_dir = Path::new(&home_dir).join(format!(".local/share/dpdk-{}", dpdk_ver));
-    let dpdk_pc_path = install_dir.join("lib64/pkgconfig/libdpdk.pc");
-    let build_tmp = env::temp_dir().join(format!("dpdk_build_{}", dpdk_ver.replace('.', "_")));
+    let pkg_config_path = install_dir.join("lib64/pkgconfig");
 
-    // 4. Слежение за изменениями
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=inlined.c");
     println!("cargo:rerun-if-changed=wrapper.h");
-    println!("cargo:rerun-if-changed=scripts/build-install-dpdk.sh");
 
-    // 5. ПРОВЕРКА и СБОРКА
-    if !dpdk_pc_path.exists() {
-        println!(
-            "cargo:warning=[STATUS] DPDK {} not found. Starting build...",
-            dpdk_ver
-        );
-
-        fs::create_dir_all(&install_dir).expect("Failed to create install directory");
-        if build_tmp.exists() {
-            let _ = fs::remove_dir_all(&build_tmp);
-        }
-        fs::create_dir_all(&build_tmp).expect("Failed to create build_tmp");
+    if !install_dir.exists() || !install_dir.join("lib64/pkgconfig/libdpdk.pc").exists() {
+        let build_tmp = env::temp_dir().join(format!("dpdk_build_{}", dpdk_ver.replace('.', "_")));
+        fs::create_dir_all(&install_dir).unwrap();
 
         let status = Command::new("bash")
             .arg(&build_script_path)
@@ -423,33 +412,14 @@ fn main() {
             .expect("Failed to start DPDK build script");
 
         if !status.success() {
-            panic!("\n[ERROR] DPDK build failed. Code: {:?}\n", status.code());
+            panic!("DPDK build script failed");
         }
     }
 
-    // --- ПРОБРАСЫВАНИЕ ПУТЕЙ ДЛЯ os_build() ---
-    // Устанавливаем путь установки в переменную окружения, чтобы os_build его увидел
+    let pkg_path_str = pkg_config_path.to_str().expect("Path is not UTF-8");
     env::set_var("DPDK_INSTALL_DIR", &install_dir);
 
-    // 6. ИЗОЛЯЦИЯ ОКРУЖЕНИЯ ДЛЯ pkg-config
-    let local_pkg_config = install_dir.join("lib64/pkgconfig");
-    let local_lib_dir = install_dir.join("lib64");
-    let pkg_config_path = local_pkg_config.to_str().expect("Non-UTF8 path");
-
-    env::set_var("PKG_CONFIG_PATH", pkg_config_path);
-    env::set_var("PKG_CONFIG_LIBDIR", pkg_config_path);
-    env::set_var("PKG_CONFIG_ALLOW_SYSTEM_LIBS", "0");
-    env::set_var("PKG_CONFIG_ALLOW_SYSTEM_CFLAGS", "0");
-
-    // 7. ЛИНКОВКА
-    println!("cargo:rustc-link-search=native={}", local_lib_dir.display());
-    println!(
-        "cargo:rustc-link-arg=-Wl,-rpath,{}",
-        local_lib_dir.display()
-    );
-
-    match os_build() {
-        Ok(()) => {}
-        Err(e) => panic!("Failed to generate bindings: {:?}", e),
+    if let Err(e) = os_build(&install_dir, pkg_path_str) {
+        panic!("Build failed: {:?}", e);
     }
 }
