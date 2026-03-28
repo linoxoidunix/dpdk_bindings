@@ -6,6 +6,7 @@ name = "demikernel-dpdk-bindings"
 version = "1.1.8"
 authors = ["Microsoft Corporation"]
 edition = "2021"
+links = "dpdk" # Это магическое поле для Cargo
 description = "Rust Bindings for Libdpdk"
 homepage = "https://aka.ms/demikernel"
 repository = "https://github.com/demikernel/demikernel"
@@ -23,6 +24,7 @@ cc = "1.1.21"
 default = ["mlx5"]
 mlx4 = []
 mlx5 = []
+
 
 [profile.release]
 opt-level = 3            # Enable all compiler optimizations.

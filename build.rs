@@ -244,8 +244,13 @@ fn os_build(install_dir: &Path, pkg_config_path: &str) -> Result<()> {
     let final_lib_dir =
         library_location.unwrap_or_else(|| install_dir.join("lib64").display().to_string());
 
+    // ВОТ ЭТА СТРОКА КРИТИЧЕСКИ ВАЖНА для links = "dpdk"
+    // Она создаст переменную DEP_DPDK_ROOT для всех, кто зависит от этого крейта
+    println!("cargo:root={}", final_lib_dir);
+
     println!("cargo:rustc-link-search=native={}", final_lib_dir);
-    // RPATH критически важен: он запекает путь в бинарник, заменяя LD_LIBRARY_PATH
+
+    // Этот rpath сработает для самого крейта биндингов
     println!("cargo:rustc-link-arg=-Wl,-rpath,{}", final_lib_dir);
 
     println!("cargo:warning=---------------------------------------");
